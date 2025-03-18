@@ -1,0 +1,32 @@
+# Ignore specific folders
+csv/
+logs/
+APIs/
+
+# Ignore specific Python files
+__path__.py
+__keys__.py
+
+# Common Python ignores
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Ignore environment and build files
+.env
+*.env
+.venv/
+*.egg-info/
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+.DS_Store
+
+# Ignore temporary files
+*.tmp
+*.log
+*.bak
