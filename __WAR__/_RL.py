@@ -6,8 +6,12 @@ import random
 from datetime import timedelta
 import matplotlib.pyplot as plt
 import sys
-sys.path.append("C:\\Users\\KrissKaron\\Desktop\\GLITCH\\GLITCH\\__WAR__")
+sys.path.append("/Users/iliemoromete/Desktop/GLITCH-Production/__WAR__")
 from __path__ import *
+
+from _deltaT import *
+period_extractor = DeltaTextractor(PATH_PIVOTS, PATH_PIVOT_PERIODS)
+period_extractor.run()
 
 # Load the data with timezone consistency and reset index
 pivots_df = pd.read_csv(PATH_PIVOT_PERIODS, parse_dates=['buy_time', 'sell_time'])
@@ -231,3 +235,156 @@ class HarveySpecterBacktest(HarveySpecter):
         plt.grid(True)
         plt.show()
 
+
+class MikeRoss(gym.Env):
+    def __init__(self, klines_path, future_trades_path):
+        super(MikeRoss, self).__init__()
+        self.klines_path = klines_path
+        self.future_trades_path = future_trades_path
+        self.load_data()
+
+        self.buy_signals = []
+        self.sell_signals = []
+
+        self.action_space = spaces.Discrete(3)  # 0 = Hold, 1 = Buy, 2 = Sell
+        self.observation_space = spaces.Box(low=-1, high=1, shape=(6,), dtype=np.float32)
+
+        self.cash = 1000  
+        self.holdings = 0
+        self.portfolio_values = []  
+        self.current_index = 0
+        self.state = None
+
+    def load_data(self):
+        self.historical_data = pd.read_csv(self.klines_path, parse_dates=['timestamp'])
+        self.historical_data.sort_values(by='timestamp', inplace=True)
+        self.future_data = pd.read_csv(self.future_trades_path, parse_dates=['timestamp'])
+        self.future_data.sort_values(by='timestamp', inplace=True)
+
+        self.historical_data['price_momentum'] = self.historical_data['close'].pct_change(5).fillna(0)
+        self.historical_data['volatility'] = self.historical_data['close'].rolling(window=5).std().fillna(0)
+        self.historical_data['price_gap'] = (self.historical_data['close'] - self.historical_data['close'].shift(5)).fillna(0)
+        self.historical_data.dropna(inplace=True)
+
+    def reset(self, seed=None, options=None):
+        self.current_index = 0
+        self.cash = 1000
+        self.holdings = 0
+        self.portfolio_values = []
+        self.state = self._get_state()
+        return self.state, {}
+
+    def _get_state(self):
+        closest_future_row = self.future_data.iloc[self.current_index]
+        closest_historical_row = self.historical_data.iloc[self.current_index]
+
+        state = np.array([
+            closest_historical_row['price_momentum'],
+            closest_historical_row['volatility'],
+            closest_historical_row['price_gap'],
+            self.cash / 1000,
+            self.holdings,
+            closest_future_row['price'] / 100000
+        ], dtype=np.float32)
+
+        return np.nan_to_num(state)
+
+    def calculate_reward(self, predicted_price, actual_price):
+        error = abs(predicted_price - actual_price) / actual_price
+        if error < 0.001:
+            return 10
+        elif error < 0.005:
+            return 5
+        elif error < 0.01:
+            return 2
+        else:
+            return -10 * error
+
+    def step(self, action):
+        if self.current_index >= len(self.future_data) - 1:
+            done = True
+            truncated = False
+            return self.state, 0.0, done, truncated, {}
+
+        actual_price = self.future_data.iloc[self.current_index]['price']
+
+        # Reward Logic (simple)
+        reward = 0
+        if action == 1 and self.cash > 0:  # Buy signal
+            self.holdings = self.cash / actual_price
+            self.cash = 0
+            self.buy_signals.append((self.future_data.iloc[self.current_index]['timestamp'], actual_price))
+            reward = 10
+        elif action == 2 and self.holdings > 0:  # Sell signal
+            self.cash = self.holdings * actual_price
+            self.holdings = 0
+            self.sell_signals.append((self.future_data.iloc[self.current_index]['timestamp'], actual_price))
+            reward = 10
+
+        portfolio_value = self.cash + self.holdings * actual_price
+        self.portfolio_values.append((self.future_data.iloc[self.current_index]['timestamp'], portfolio_value))
+
+        self.current_index += 1
+        self.state = self._get_state()
+        done = self.current_index >= len(self.future_data)
+        truncated = False
+
+        return self.state, reward, done, truncated, {}
+
+    def render(self, mode='human'):
+        print(f"Step {self.current_index}: Portfolio Value = {self.portfolio_values[-1][1]:.2f}")
+
+    def plot_results(self):
+        df_future = pd.read_csv(self.future_trades_path, parse_dates=['timestamp'])
+        df_klines = pd.read_csv(self.klines_path, parse_dates=['timestamp'])
+        df_klines.dropna(subset=['timestamp'], inplace=True)
+
+        print(f"NaN values in BTCUSDC_klines timestamps: {df_klines['timestamp'].isna().sum()}")
+        print(f"NaN values in future_trades timestamps: {df_future['timestamp'].isna().sum()}")
+
+        df_klines['timestamp'] = pd.to_datetime(df_klines['timestamp'])
+        df_klines.sort_values('timestamp', inplace=True)
+        df_future['timestamp'] = pd.to_datetime(df_future['timestamp'])
+        df_future.sort_values('timestamp', inplace=True)
+
+        merged_data = pd.merge_asof(
+            df_klines[['timestamp', 'close']], 
+            df_future[['timestamp', 'price', 'signal']], 
+            on='timestamp',
+            direction='backward'
+        )
+
+        merged_data.dropna(subset=['close', 'price'], inplace=True)
+
+        plt.figure(figsize=(30, 16))
+        plt.plot(merged_data['timestamp'], merged_data['price'], color='purple', label='Estimated Prices')
+        plt.plot(merged_data['timestamp'], merged_data['close'], color='blue', label='Historical BTCUSDC Prices')
+
+        buy_signals = merged_data[merged_data['signal'] == 'buy']
+        sell_signals = merged_data[merged_data['signal'] == 'sell']
+
+        if not buy_signals.empty:
+            plt.scatter(buy_signals['timestamp'], buy_signals['price'], color='green', label='Buy Signal', marker='^')
+        if not sell_signals.empty:
+            plt.scatter(sell_signals['timestamp'], sell_signals['price'], color='red', label='Sell Signal', marker='v')
+
+        plt.title("BTC Price with Trade Signals")
+        plt.xlabel("Timestamp")
+        plt.ylabel("Price")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(f"{PATH_TRADE}/plot_prices.png")
+        plt.close()
+
+        # Portfolio Growth
+        portfolio_df = pd.DataFrame(self.portfolio_values, columns=['timestamp', 'portfolio_value'])
+
+        plt.figure(figsize=(30, 16))
+        plt.plot(portfolio_df['timestamp'], portfolio_df['portfolio_value'], color='orange', label='Portfolio Value')
+        plt.title("Portfolio Value Over Time")
+        plt.xlabel("Timestamp")
+        plt.ylabel("Portfolio Value")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(f"{PATH_TRADE}/plot_portfolio.png")
+        plt.close()

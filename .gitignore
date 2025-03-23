@@ -6,6 +6,7 @@ APIs/
 # Ignore specific Python files
 __path__.py
 __keys__.py
+_trade.py
 
 # Common Python ignores
 *.pyc

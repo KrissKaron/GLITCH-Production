@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from __path__ import *
 
 class Pivot:
-    def __init__(self, df, interval, window_size=5, significance_threshold=0.001):
+    def __init__(self, df, interval, window_size=5, significance_threshold=0.001, output_path=None):
         """
         Initialize the pivot detection algorithm.
 
@@ -20,6 +20,7 @@ class Pivot:
         self.significance_threshold = significance_threshold
         self.pivots = None
         self.signals = None
+        self.output_path = output_path
 
         # Ensure timestamp is in datetime format
         self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
@@ -79,14 +80,13 @@ class Pivot:
 
     def save_to_csv(self):
         """Save the signals to a CSV file."""
-        output_path = f'{PATH_CSV}/PIVOTS_{self.interval}.csv'
         signals_df = pd.DataFrame(self.signals, columns=['timestamp', 'price', 'signal'])
-        signals_df.to_csv(output_path, index=False)
-        print(f"Pivot signals saved to {output_path}")
+        signals_df.to_csv(self.output_path, index=False)
+        print(f"Pivot signals saved to {self.output_path}")
 
     def plot_signals(self):
         """Plot price data along with detected buy/sell signals."""
-        plt.figure(figsize=(30, 20))
+        plt.figure(figsize=(30, 16))
         plt.plot(self.df['timestamp'], self.df['close'], label="Close Price", color="blue")
 
         buy_signals = self.df[self.df['pivot'] == 'min']
@@ -109,8 +109,10 @@ class Pivot:
         self.save_to_csv()
         #self.plot_signals()
 
+
+
 class PivotButPurple:
-    def __init__(self, df, interval, window_size=5, significance_threshold=0.001, output_path=None):
+    def __init__(self, df, interval, window_size=None, significance_threshold=None, output_path=None):
         self.df = df.copy()
         self.interval = interval
         self.window_size = window_size
@@ -126,6 +128,7 @@ class PivotButPurple:
         self.df['pivot'] = None
         self.df['pivot'] = self.df['pivot'].astype('object')
         self.df['price_change'] = self.df['price'].pct_change().abs()
+
         self.df['local_min'] = self.df['price'].rolling(window=self.window_size, center=True).apply(
             lambda x: x[self.window_size // 2] if x[self.window_size // 2] == np.min(x) else np.nan,
             raw=True
@@ -135,12 +138,21 @@ class PivotButPurple:
             raw=True
         )
 
+        # Trend-based detection for smoother movements
+        self.df['trend_slope'] = self.df['price'].diff().rolling(window=self.window_size).mean()
+        self.df['trend'] = self.df['price'].diff().rolling(window=self.window_size).sum()
+
         def classify_pivot(row):
             if pd.notna(row['local_min']) and row['price_change'] > self.significance_threshold:
                 return 'min'
             elif pd.notna(row['local_max']) and row['price_change'] > self.significance_threshold:
                 return 'max'
+            elif row['trend_slope'] < -0.0001:  # Trendline signal for declining trends
+                return 'min'
+            elif row['trend_slope'] > 0.0001:   # Trendline signal for rising trends
+                return 'max'
             return None
+
         self.df['pivot'] = self.df.apply(classify_pivot, axis=1)
         self.pivots = self.df.dropna(subset=['pivot'])
 
@@ -148,7 +160,8 @@ class PivotButPurple:
         """Generate buy/sell signals based on pivot points."""
         self.signals = []
         last_signal = None
-        for idx, row in self.pivots.iterrows():
+
+        for idx, row in self.df.iterrows():
             if row['pivot'] == 'min' and last_signal != 'buy':
                 self.signals.append((row['timestamp'], row['price'], "buy"))
                 last_signal = "buy"
@@ -161,8 +174,17 @@ class PivotButPurple:
     def save_to_csv(self):
         """Save the signals to a CSV file."""
         signals_df = pd.DataFrame(self.signals, columns=['timestamp', 'price', 'signal'])
-        signals_df.to_csv(self.output_path, index=False)
-        print(f"Pivot signals saved to {self.output_path}")
+
+        # Append to existing data if the file exists
+        if self.output_path:
+            try:
+                existing_data = pd.read_csv(self.output_path, parse_dates=['timestamp'])
+                combined_df = pd.concat([existing_data, signals_df]).drop_duplicates('timestamp').reset_index(drop=True)
+                combined_df.to_csv(self.output_path, index=False)
+            except FileNotFoundError:
+                signals_df.to_csv(self.output_path, index=False)
+
+        print(f"✅ Pivot signals saved to {self.output_path}")
 
     def plot_signals(self):
         """Plot price data along with detected buy/sell signals."""
@@ -187,4 +209,4 @@ class PivotButPurple:
         self.detect_pivots()
         self.generate_signals()
         self.save_to_csv()
-        #self.plot_signals()
+        # self.plot_signals()

@@ -20,6 +20,7 @@ from _deltaT import *
 from _RL import *
 from _signal_updater import *
 from _plottation_device import *
+from _trade import *
 # Importing API modules
 from API_Sentiment import RedditSentimentScraper
 from API_Newsapi import API_Newsapi
@@ -169,9 +170,9 @@ async def excavate_score_compact():
     print("Data successfully compacted and saved.")
     print("================================= 8 =================================\n\n")
 
-async def run_pivot_detection(klines_file):
+async def run_pivot_detection(klines_file, output_path):
     klines_df = pd.read_csv(klines_file)
-    pivot_detector = Pivot(klines_df, interval='1m', window_size=5, significance_threshold=0.001)
+    pivot_detector = Pivot(klines_df, interval='1m', window_size=5, significance_threshold=0.001, output_path=output_path)
     await asyncio.get_event_loop().run_in_executor(None, pivot_detector.run)
 
 async def run_deltaT_extraction(input_path, output_path):
@@ -306,10 +307,21 @@ async def PURPLE_run_price_estimation(btc_data_file, news_data_file, damped_outp
     print("================================= 15 =================================\n\n")
 
 # ======================== SIGNAL UPDATING ========================
-async def PURPLE_update_signals(damped_file, pivots_file, purple_signals_file, output_file):
-    klines_df = pd.read_csv(damped_file)
-    pivot_detector = PivotButPurple(klines_df, interval='1m', window_size=5, significance_threshold=0.001, output_path=PATH_PURPLE_SIGNALS)
-    await asyncio.get_event_loop().run_in_executor(None, pivot_detector.run)
-    updater = SignalUpdater(pivots_file, purple_signals_file, output_file)
+async def PURPLE_update_signals(damped_file, output_file):
+    updater = SignalUpdater(damped_file, output_file)
     await asyncio.get_event_loop().run_in_executor(None, updater.update_signals)
     print("================================= 16 =================================\n\n")
+
+# ======================== TRADING THE FUTURE ========================
+async def TRADE_future(future_trades_path, klines_path):
+    trader = Trade(future_trades_path, klines_path)
+    await asyncio.get_event_loop().run_in_executor(None, trader.simulate_trading)
+    await asyncio.get_event_loop().run_in_executor(None, trader.plot_results)
+    print("✅ Trading simulation and plots completed successfully.")
+    print("================================= 17 =================================\n\n")
+
+# ======================== REWARDING/PUNISHING PURPLE PIVOTS ========================
+async def TRADE_MikeRoss(klines_path, future_trades_path):
+    agent = MikeRoss(klines_path, future_trades_path)
+    await asyncio.get_event_loop().run_in_executor(None, agent.plot_results)
+    print("✅ Trading simulation complete.")
